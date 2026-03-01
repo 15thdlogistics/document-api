@@ -1,0 +1,65 @@
+name = "document-api"
+main = "src/index.js"
+compatibility_date = "2025-02-28"
+
+workers_dev = true
+
+# =========================================================
+# R2 BUCKETS
+# =========================================================
+
+[[r2_buckets]]
+binding = "MISSION_DOCS"
+bucket_name = "mission-docs"
+
+[[r2_buckets]]
+binding = "OPERATOR_DOCS"
+bucket_name = "operator-docs"
+
+[[r2_buckets]]
+binding = "FLEET_DOCS"
+bucket_name = "fleet-docs"
+
+[[r2_buckets]]
+binding = "AUTOFLEET_DOCS"
+bucket_name = "autofleet-docs"
+
+
+# =========================================================
+# DURABLE OBJECTS
+# =========================================================
+
+[durable_objects]
+bindings = [
+  { name = "MISSION_STATE", class_name = "MissionState" },
+  { name = "MISSION_CLOCKS", class_name = "MissionClocks" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["MissionState", "MissionClocks"]
+
+
+# =========================================================
+# SERVICE BINDINGS
+# =========================================================
+
+[[services]]
+binding = "icc-orm-engine"
+service = "icc-orm-engine"
+
+[[services]]
+binding = "icc-pivot-engine"
+service = "icc-pivot-engine"
+
+[[services]]
+binding = "icc-mission-engine"
+service = "icc-mission-engine"
+
+
+# =========================================================
+# ENVIRONMENT VARIABLES
+# =========================================================
+
+[vars]
+AI_API_KEY = "set_via_secret_not_here"
