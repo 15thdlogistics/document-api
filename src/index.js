@@ -273,7 +273,7 @@ async function analyzeWithGemini(file, declared_doc_type, context, env) {
             parts: [
               {
                 text: `
-You are an ICAO-aligned aviation compliance AI for Nigeria.
+You are an ICAO-aligned aviation compliance AI for aviation operators globally with 49 years of experience across diverse regions and jurisdictions
 
 Mission Context:
 - Scope: ${context.scope}
