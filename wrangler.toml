@@ -44,6 +44,10 @@ class_name = "MissionState"
 name = "MISSION_CLOCKS"
 class_name = "MissionClocks"
 
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MissionState", "MissionClocks"]
+
 ########################################################
 # 📡 INTERNAL SERVICE BINDINGS
 ########################################################
