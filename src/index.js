@@ -490,3 +490,57 @@ function json(data, status = 200) {
     headers: { "Content-Type": "application/json" }
   });
 }
+export class MissionState {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+
+    if (request.method === "POST" && url.pathname === "/mission/update") {
+      const data = await request.json();
+
+      await this.state.storage.put("mission_state", {
+        ...(await this.state.storage.get("mission_state") || {}),
+        ...data
+      });
+
+      return new Response("OK");
+    }
+
+    if (request.method === "GET" || url.pathname === "/mission/state") {
+      const state = await this.state.storage.get("mission_state");
+      return new Response(JSON.stringify(state || {}), {
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    return new Response("Not Found", { status: 404 });
+  }
+}
+
+export class MissionClocks {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+
+    if (request.method === "POST" && url.pathname === "/clock/update") {
+      const data = await request.json();
+
+      await this.state.storage.put("clock_state", {
+        ...(await this.state.storage.get("clock_state") || {}),
+        ...data
+      });
+
+      return new Response("OK");
+    }
+
+    return new Response("Not Found", { status: 404 });
+  }
+}
