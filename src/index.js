@@ -1,82 +1,16 @@
 import { handleUpload } from "./document-engine.js";
+import { MissionState } from "./mission-state.js";
+import { MissionClocks } from "./mission-clocks.js";
 
-/* =====================================================
-   DURABLE OBJECTS
-===================================================== */
+/* =====================================
+   EXPORT DURABLE OBJECTS
+===================================== */
 
-export class MissionState {
+export { MissionState, MissionClocks };
 
-  constructor(state, env) {
-    this.state = state;
-    this.env = env;
-    this.sessions = new Set();
-  }
-
-  async fetch(request) {
-
-    const url = new URL(request.url);
-
-    if (url.pathname === "/mission/update" && request.method === "POST") {
-
-      const data = await request.json();
-
-      const current =
-        await this.state.storage.get("mission_state") || {};
-
-      const updated = {
-        ...current,
-        ...data,
-        updated_at: Date.now()
-      };
-
-      await this.state.storage.put("mission_state", updated);
-
-      return new Response("OK");
-    }
-
-    const state = await this.state.storage.get("mission_state");
-
-    return new Response(JSON.stringify(state || {}), {
-      headers: { "Content-Type": "application/json" }
-    });
-  }
-}
-
-
-export class MissionClocks {
-
-  constructor(state, env) {
-    this.state = state;
-    this.env = env;
-  }
-
-  async fetch(request) {
-
-    const url = new URL(request.url);
-
-    if (url.pathname === "/clock/update" && request.method === "POST") {
-
-      const data = await request.json();
-
-      const current =
-        await this.state.storage.get("clock_state") || {};
-
-      await this.state.storage.put("clock_state", {
-        ...current,
-        ...data
-      });
-
-      return new Response("OK");
-    }
-
-    return new Response("Not Found", { status: 404 });
-  }
-
-}
-
-/* =====================================================
+/* =====================================
    MAIN WORKER
-===================================================== */
+===================================== */
 
 export default {
 
@@ -84,13 +18,25 @@ export default {
 
     const url = new URL(request.url);
 
+    /* ===============================
+       ROOT HEALTH CHECK
+    =============================== */
+
     if (url.pathname === "/") {
       return new Response("Document API Alive");
     }
 
+    /* ===============================
+       DOCUMENT UPLOAD
+    =============================== */
+
     if (url.pathname === "/upload" && request.method === "POST") {
       return handleUpload(request, env, ctx);
     }
+
+    /* ===============================
+       MISSION DURABLE OBJECT ROUTING
+    =============================== */
 
     if (url.pathname.startsWith("/mission/")) {
 
@@ -112,6 +58,7 @@ export default {
       );
 
       return stub.fetch(newRequest);
+
     }
 
     return new Response("Not Found", { status: 404 });
