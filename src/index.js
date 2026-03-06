@@ -1,10 +1,10 @@
 import { handleUpload } from "./document-engine.js";
 import { MissionState, MissionClocks } from "./mission-state.js";
 
+/* REQUIRED EXPORTS FOR DURABLE OBJECTS */
 export { MissionState, MissionClocks };
 
 export default {
-
   async fetch(request, env, ctx) {
 
     const url = new URL(request.url);
@@ -37,11 +37,8 @@ export default {
       );
 
       return stub.fetch(newRequest);
-
     }
 
     return new Response("Not Found", { status: 404 });
-
   }
-
 };
