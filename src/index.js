@@ -1,10 +1,85 @@
 import { handleUpload } from "./document-engine.js";
-import { MissionState, MissionClocks } from "./mission-state.js";
 
-/* REQUIRED EXPORTS FOR DURABLE OBJECTS */
-export { MissionState, MissionClocks };
+/* =====================================================
+   DURABLE OBJECTS
+===================================================== */
+
+export class MissionState {
+
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+    this.sessions = new Set();
+  }
+
+  async fetch(request) {
+
+    const url = new URL(request.url);
+
+    if (url.pathname === "/mission/update" && request.method === "POST") {
+
+      const data = await request.json();
+
+      const current =
+        await this.state.storage.get("mission_state") || {};
+
+      const updated = {
+        ...current,
+        ...data,
+        updated_at: Date.now()
+      };
+
+      await this.state.storage.put("mission_state", updated);
+
+      return new Response("OK");
+    }
+
+    const state = await this.state.storage.get("mission_state");
+
+    return new Response(JSON.stringify(state || {}), {
+      headers: { "Content-Type": "application/json" }
+    });
+  }
+}
+
+
+export class MissionClocks {
+
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+  }
+
+  async fetch(request) {
+
+    const url = new URL(request.url);
+
+    if (url.pathname === "/clock/update" && request.method === "POST") {
+
+      const data = await request.json();
+
+      const current =
+        await this.state.storage.get("clock_state") || {};
+
+      await this.state.storage.put("clock_state", {
+        ...current,
+        ...data
+      });
+
+      return new Response("OK");
+    }
+
+    return new Response("Not Found", { status: 404 });
+  }
+
+}
+
+/* =====================================================
+   MAIN WORKER
+===================================================== */
 
 export default {
+
   async fetch(request, env, ctx) {
 
     const url = new URL(request.url);
@@ -40,5 +115,7 @@ export default {
     }
 
     return new Response("Not Found", { status: 404 });
+
   }
+
 };
