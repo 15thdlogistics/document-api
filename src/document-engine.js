@@ -1,7 +1,6 @@
+import { runSecurityTelemetry } from "./upload.js";
 
-
-  
-     =========================================================
+/*    =========================================================
    MAIN UPLOAD HANDLER
    ========================================================= */
 
@@ -46,17 +45,35 @@ export async function handleUpload(request, env, ctx) {
   } = analysis;
 
   const risk = computeRisk({
+  validation_score,
+  expiry_date,
+  fraud_signal,
+  completeness_score
+});
+
+const now = Date.now();
+
+ctx.waitUntil(
+  runSecurityTelemetry({
+    mission_id,
+    operator_id,
+    doc_type,
+    detected_doc_type,
     validation_score,
     expiry_date,
     fraud_signal,
-    completeness_score
-  });
+    ai_confidence: validation_score,
+    risk,
+    fileHash: key,
+    now,
+    env
+  })
+);
 
   /* =========================================================
      D1 METADATA PERSISTENCE (env.schema)
      ========================================================= */
 
-  const now = Date.now();
   const isValid = validation_score > 0.7 && risk < 0.6 ? 1 : 0;
 
   if (scope === "mission" && mission_id) {
@@ -246,9 +263,15 @@ async function putToR2(scope, key, file, env) {
 
 async function analyzeWithGemini(file, declared_doc_type, context, env) {
   const buffer = await file.arrayBuffer();
-  const base64 = btoa(
-  new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
-);
+  const bytes = new Uint8Array(buffer);
+let binary = "";
+const chunkSize = 0x8000;
+
+for (let i = 0; i < bytes.length; i += chunkSize) {
+  binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+}
+
+const base64 = btoa(binary);
 
   const response = await fetch(
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" +
@@ -394,6 +417,7 @@ function computeRisk({
     fraud_signal * 0.1
   );
 }
+
 
 /* =========================================================
    DURABLE OBJECT + ENGINE FUNCTIONS
