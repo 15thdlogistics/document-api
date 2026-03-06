@@ -1,37 +1,11 @@
 
-export default {
-
-  async fetch(request, env, ctx) {
-
-    const url = new URL(request.url);
-
-    if (url.pathname === "/upload" && request.method === "POST") {
-      return handleUpload(request, env, ctx);
-    }
-
-    if (url.pathname.startsWith("/mission/")) {
-
-      const mission_id = url.pathname.split("/")[2];
-
-      const id = env.MISSION_STATE.idFromName(mission_id);
-
-      const stub = env.MISSION_STATE.get(id);
-
-      return stub.fetch(request);
-
-    }
-
-    return new Response("Not Found", { status: 404 });
 
   
-  }
-};
-
-/* =========================================================
+     =========================================================
    MAIN UPLOAD HANDLER
    ========================================================= */
 
-async function handleUpload(request, env, ctx) {
+export async function handleUpload(request, env, ctx) {
   const form = await request.formData();
 
   const file = form.get("file");
