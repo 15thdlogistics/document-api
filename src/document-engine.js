@@ -246,7 +246,9 @@ async function putToR2(scope, key, file, env) {
 
 async function analyzeWithGemini(file, declared_doc_type, context, env) {
   const buffer = await file.arrayBuffer();
-  const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+  const base64 = btoa(
+  new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
+);
 
   const response = await fetch(
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" +
