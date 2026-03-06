@@ -1,16 +1,10 @@
-import { handleUpload } from "./document-engine.js";
-import { MissionState } from "./mission-state.js";
-import { MissionClocks } from "./mission-clocks.js";
-
-/* =====================================
-   EXPORT DURABLE OBJECTS
-===================================== */
+import {
+  handleUpload,
+  MissionState,
+  MissionClocks
+} from "./document-engine.js";
 
 export { MissionState, MissionClocks };
-
-/* =====================================
-   MAIN WORKER
-===================================== */
 
 export default {
 
@@ -18,25 +12,19 @@ export default {
 
     const url = new URL(request.url);
 
-    /* ===============================
-       ROOT HEALTH CHECK
-    =============================== */
+    /* HEALTH CHECK */
 
     if (url.pathname === "/") {
       return new Response("Document API Alive");
     }
 
-    /* ===============================
-       DOCUMENT UPLOAD
-    =============================== */
+    /* DOCUMENT UPLOAD */
 
     if (url.pathname === "/upload" && request.method === "POST") {
       return handleUpload(request, env, ctx);
     }
 
-    /* ===============================
-       MISSION DURABLE OBJECT ROUTING
-    =============================== */
+    /* ROUTE TO MISSION STATE DURABLE OBJECT */
 
     if (url.pathname.startsWith("/mission/")) {
 
@@ -58,7 +46,30 @@ export default {
       );
 
       return stub.fetch(newRequest);
+    }
 
+    /* ROUTE TO MISSION CLOCKS */
+
+    if (url.pathname.startsWith("/clock/")) {
+
+      const parts = url.pathname.split("/");
+      const mission_id = parts[2];
+
+      if (!mission_id) {
+        return new Response("Missing mission_id", { status: 400 });
+      }
+
+      const id = env.MISSION_CLOCKS.idFromName(mission_id);
+      const stub = env.MISSION_CLOCKS.get(id);
+
+      const newPath = "/" + parts.slice(3).join("/");
+
+      const newRequest = new Request(
+        new URL(newPath || "/clock/state", request.url),
+        request
+      );
+
+      return stub.fetch(newRequest);
     }
 
     return new Response("Not Found", { status: 404 });
