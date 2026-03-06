@@ -1,0 +1,48 @@
+import { handleUpload } from "./document-engine.js";
+import "./upload.js"
+import "./ofload.js";
+import "./mission-state.js";
+
+export default {
+
+  async fetch(request, env, ctx) {
+
+    const url = new URL(request.url);
+
+    /* ===============================
+       DOCUMENT UPLOAD
+    =============================== */
+
+    if (url.pathname === "/upload" && request.method === "POST") {
+      return handleUpload(request, env, ctx);
+    }
+
+    /* ===============================
+       MISSION DURABLE OBJECT ROUTING
+    =============================== */
+
+    if (url.pathname.startsWith("/mission/")) {
+
+      const parts = url.pathname.split("/");
+
+      const mission_id = parts[2];
+
+      const id = env.MISSION_STATE.idFromName(mission_id);
+      const stub = env.MISSION_STATE.get(id);
+
+      const newPath = "/" + parts.slice(3).join("/");
+
+      const newRequest = new Request(
+        new URL(newPath || "/mission/state", request.url),
+        request
+      );
+
+      return stub.fetch(newRequest);
+
+    }
+
+    return new Response("Not Found", { status: 404 });
+
+  }
+
+};
