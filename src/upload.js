@@ -1,16 +1,18 @@
 export async function handleUpload(request, env, ctx) {
-  async fetch(request, env, ctx) {
-    const url = new URL(request.url);
 
-    if (request.method === "POST" && url.pathname === "/upload") {
-      return handleUpload(request, env, ctx);
-    }
+  const form = await request.formData();
 
-    if (request.method === "POST" && url.pathname === "/mission/compliance") {
-      return missionCompliance(request, env);
-    }
+  const file = form.get("file");
+  const mission_id = form.get("mission_id");
+  const operator_id = form.get("operator_id");
+  const fleet_id = form.get("fleet_id");
+  const doc_type = form.get("doc_type");
+  const scope = form.get("scope");
+  const mission_tier = form.get("mission_tier");
 
-    return new Response("Not Found", { status: 404 });
+  if (!file || !doc_type || !scope) {
+    return json({ error: "INVALID_INPUT" }, 400);
+  
   }
 };
 
