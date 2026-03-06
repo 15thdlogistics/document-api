@@ -558,3 +558,56 @@ export class MissionClocks {
     return new Response("Not Found", { status: 404 });
   }
 }
+/* =========================================================
+   TRAFFIC CONTROLLER (Add this to the end of your file)
+   ========================================================= */
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+
+    // 1. Health Check
+    if (url.pathname === "/") {
+      return new Response("Aviation Document Engine Alive", { status: 200 });
+    }
+
+    // 2. Route to your handleUpload function
+    if (url.pathname === "/upload" && request.method === "POST") {
+      return handleUpload(request, env, ctx);
+    }
+
+    // 3. Route to MissionState Durable Object
+    if (url.pathname.startsWith("/mission/")) {
+      const parts = url.pathname.split("/");
+      const mission_id = parts[2];
+      if (!mission_id) return new Response("Missing mission_id", { status: 400 });
+
+      const id = env.MISSION_STATE.idFromName(mission_id);
+      const stub = env.MISSION_STATE.get(id);
+
+      // This ensures the DO receives the "/mission/state" or "/mission/update" paths it expects
+      const subPath = parts.slice(3).join("/") || "state";
+      const targetUrl = new URL(`/mission/${subPath}`, "https://internal");
+
+      return stub.fetch(new Request(targetUrl, request));
+    }
+
+    // 4. Route to MissionClocks Durable Object
+    if (url.pathname.startsWith("/clock/")) {
+      const parts = url.pathname.split("/");
+      const mission_id = parts[2];
+      if (!mission_id) return new Response("Missing mission_id", { status: 400 });
+
+      const id = env.MISSION_CLOCKS.idFromName(mission_id);
+      const stub = env.MISSION_CLOCKS.get(id);
+
+      const subPath = parts.slice(3).join("/") || "update";
+      const targetUrl = new URL(`/clock/${subPath}`, "https://internal");
+
+      return stub.fetch(new Request(targetUrl, request));
+    }
+
+    return new Response("Not Found", { status: 404 });
+  }
+};
+
