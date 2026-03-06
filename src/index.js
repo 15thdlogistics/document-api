@@ -1,17 +1,32 @@
+import { handleUpload } from "./upload.js";
+import "./offload.js";
+import "./mission-state.js";
+
 export default {
+
   async fetch(request, env, ctx) {
 
     const url = new URL(request.url);
 
-    if (request.method === "POST" && url.pathname === "/upload") {
+    if (url.pathname === "/upload" && request.method === "POST") {
       return handleUpload(request, env, ctx);
     }
 
-    if (request.method === "POST" && url.pathname === "/mission/compliance") {
-      return missionCompliance(request, env);
+    if (url.pathname.startsWith("/mission/")) {
+
+      const mission_id = url.pathname.split("/")[2];
+
+      const id = env.MISSION_STATE.idFromName(mission_id);
+
+      const stub = env.MISSION_STATE.get(id);
+
+      return stub.fetch(request);
+
     }
 
     return new Response("Not Found", { status: 404 });
+
+  
   }
 };
 
