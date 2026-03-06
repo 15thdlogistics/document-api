@@ -3,7 +3,6 @@ export class MissionState {
   constructor(state, env) {
     this.state = state;
     this.env = env;
-
     this.sessions = new Set();
   }
 
@@ -17,10 +16,13 @@ export class MissionState {
 
     if (url.pathname === "/connect") {
 
+      let session;
+
       const stream = new ReadableStream({
+
         start: (controller) => {
 
-          const session = { controller };
+          session = { controller };
 
           this.sessions.add(session);
 
@@ -34,7 +36,11 @@ export class MissionState {
         },
 
         cancel: () => {
-          this.sessions.delete(session);
+
+          if (session) {
+            this.sessions.delete(session);
+          }
+
         }
 
       });
@@ -50,10 +56,26 @@ export class MissionState {
     }
 
     /* =====================================
+       GET CURRENT MISSION STATE
+    ===================================== */
+
+    if (request.method === "GET") {
+
+      const state = await this.state.storage.get("mission_state");
+
+      return new Response(JSON.stringify(state || {}), {
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+
+    }
+
+    /* =====================================
        MISSION STATE UPDATE
     ===================================== */
 
-    if (url.pathname === "/mission/update") {
+    if (url.pathname === "/mission/update" && request.method === "POST") {
 
       const data = await request.json();
 
@@ -80,6 +102,10 @@ export class MissionState {
     return new Response("Not Found", { status: 404 });
 
   }
+
+  /* =====================================
+     BROADCAST TO LIVE SESSIONS
+  ===================================== */
 
   broadcast(message) {
 
