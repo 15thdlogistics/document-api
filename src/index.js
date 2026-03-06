@@ -1,5 +1,5 @@
 import { handleUpload } from "./document-engine.js";
-import "./upload.js"
+import "./upload.js";
 import "./ofload.js";
 import "./mission-state.js";
 
@@ -8,6 +8,14 @@ export default {
   async fetch(request, env, ctx) {
 
     const url = new URL(request.url);
+
+    /* ===============================
+       ROOT HEALTH CHECK
+    =============================== */
+
+    if (url.pathname === "/") {
+      return new Response("Document API Alive");
+    }
 
     /* ===============================
        DOCUMENT UPLOAD
@@ -26,6 +34,10 @@ export default {
       const parts = url.pathname.split("/");
 
       const mission_id = parts[2];
+
+      if (!mission_id) {
+        return new Response("Missing mission_id", { status: 400 });
+      }
 
       const id = env.MISSION_STATE.idFromName(mission_id);
       const stub = env.MISSION_STATE.get(id);
