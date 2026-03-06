@@ -1,6 +1,7 @@
 import { handleUpload } from "./document-engine.js";
-import "./upload.js";
-import "./mission-state.js";
+import { MissionState, MissionClocks } from "./mission-state.js";
+
+export { MissionState, MissionClocks };
 
 export default {
 
@@ -8,31 +9,17 @@ export default {
 
     const url = new URL(request.url);
 
-    /* ===============================
-       ROOT HEALTH CHECK
-    =============================== */
-
     if (url.pathname === "/") {
       return new Response("Document API Alive");
     }
-
-
-    /* ===============================
-       DOCUMENT UPLOAD
-    =============================== */
 
     if (url.pathname === "/upload" && request.method === "POST") {
       return handleUpload(request, env, ctx);
     }
 
-    /* ===============================
-       MISSION DURABLE OBJECT ROUTING
-    =============================== */
-
     if (url.pathname.startsWith("/mission/")) {
 
       const parts = url.pathname.split("/");
-
       const mission_id = parts[2];
 
       if (!mission_id) {
