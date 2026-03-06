@@ -1,18 +1,17 @@
-export async function handleUpload(request, env, ctx) {
+export default {
+  async fetch(request, env, ctx) {
 
-  const form = await request.formData();
+    const url = new URL(request.url);
 
-  const file = form.get("file");
-  const mission_id = form.get("mission_id");
-  const operator_id = form.get("operator_id");
-  const fleet_id = form.get("fleet_id");
-  const doc_type = form.get("doc_type");
-  const scope = form.get("scope");
-  const mission_tier = form.get("mission_tier");
+    if (url.pathname === "/upload" && request.method === "POST") {
+      return handleUpload(request, env, ctx);
+    }
 
-  if (!file || !doc_type || !scope) {
-    return json({ error: "INVALID_INPUT" }, 400);
-  
+    if (url.pathname === "/mission/compliance" && request.method === "POST") {
+      return missionCompliance(request, env);
+    }
+
+    return new Response("Not Found", { status: 404 });
   }
 };
 
@@ -244,152 +243,6 @@ async function handleUpload(request, env, ctx) {
 }
 
 /* =========================================================
-COMPOSITE MISSION TELEMETRY
-========================================================= */
-
-async function computeCompositeMissionTelemetry(mission_id, env) {
-
-  const docs = await env.schema.prepare(`
-    SELECT doc_type, validation_score, risk_score, expiry_date
-    FROM mission_documents
-    WHERE mission_id = ?
-    AND superseded IS NULL
-  `).bind(mission_id).all();
-
-  if (!docs.results.length) return;
-
-  let totalRisk = 0;
-  let nextExpiry = null;
-
-  for (const d of docs.results) {
-
-    totalRisk += d.risk_score;
-
-    if (d.expiry_date) {
-      if (!nextExpiry || d.expiry_date < nextExpiry) {
-        nextExpiry = d.expiry_date;
-      }
-    }
-  }
-
-  const compositeRisk = totalRisk / docs.results.length;
-
-  await emitEvent("MISSION_COMPOSITE_UPDATED", {
-    mission_id,
-    composite_risk: compositeRisk,
-    next_expiry: nextExpiry
-  }, env);
-}
-
-/* =========================================================
-COMPLIANCE DRIFT
-========================================================= */
-
-async function computeComplianceDrift(mission_id, env) {
-
-  const rows = await env.schema.prepare(`
-    SELECT validation_score, risk_score, created_at
-    FROM mission_documents
-    WHERE mission_id = ?
-    ORDER BY created_at DESC
-    LIMIT 10
-  `).bind(mission_id).all();
-
-  if (rows.results.length < 2) return;
-
-  const latest = rows.results[0];
-  const previous = rows.results[1];
-
-  const validationDrop =
-    previous.validation_score - latest.validation_score;
-
-  const riskIncrease =
-    latest.risk_score - previous.risk_score;
-
-  if (validationDrop > 0.3) {
-    await emitEvent("VALIDATION_DROP_DETECTED", {
-      mission_id,
-      drop: validationDrop
-    }, env);
-  }
-
-  if (riskIncrease > 0.3) {
-    await emitEvent("RISK_SPIKE_DETECTED", {
-      mission_id,
-      increase: riskIncrease
-    }, env);
-  }
-}
-
-/* =========================================================
-CROSS SCOPE CORRELATION
-========================================================= */
-
-async function detectCrossScopeConflict(mission_id, operator_id, env) {
-
-  if (!mission_id || !operator_id) return;
-
-  const missionRisk = await env.schema.prepare(`
-    SELECT AVG(risk_score) as r
-    FROM mission_documents
-    WHERE mission_id = ?
-    AND superseded IS NULL
-  `).bind(mission_id).first();
-
-  const operatorRisk = await env.schema.prepare(`
-    SELECT AVG(risk_score) as r
-    FROM operator_documents
-    WHERE operator_id = ?
-  `).bind(operator_id).first();
-
-  if (missionRisk?.r > 0.7 && operatorRisk?.r < 0.2) {
-
-    await emitEvent("CROSS_SCOPE_CONTRADICTION", {
-      mission_id,
-      operator_id
-    }, env);
-  }
-}
-
-/* =========================================================
-EVENT DERIVATION
-========================================================= */
-
-function deriveEvents({
-  validation_score,
-  expiry_date,
-  fraud_signal,
-  detected_doc_type,
-  declared_doc_type
-}) {
-
-  const events = [];
-  const now = Date.now();
-
-  if (validation_score > 0.8)
-    events.push("DOCUMENT_VALIDATED");
-  else
-    events.push("DOCUMENT_REJECTED");
-
-  if (fraud_signal > 0.6)
-    events.push("FRAUD_SIGNAL_DETECTED");
-
-  if (detected_doc_type !== declared_doc_type)
-    events.push("TYPE_MISMATCH_DETECTED");
-
-  if (expiry_date && expiry_date < now)
-    events.push("DOCUMENT_EXPIRED");
-
-  else if (expiry_date && expiry_date - now < 604800000)
-    events.push("PRE_EXPIRY_WARNING");
-
-  if (expiry_date && expiry_date - now < 172800000)
-    events.push("CRITICAL_EXPIRY_WARNING");
-
-  return events;
-}
-
-/* =========================================================
 MISSION READINESS ENDPOINT
 ========================================================= */
 
@@ -438,85 +291,11 @@ async function missionCompliance(request, env) {
 }
 
 /* =========================================================
-AI ANALYSIS
-========================================================= */
-
-async function analyzeWithGemini(file, declared_doc_type, env) {
-
-  const buffer = await file.arrayBuffer();
-
-  const base64 =
-    btoa(String.fromCharCode(...new Uint8Array(buffer)));
-
-  const response = await fetch(
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=" + env.AI_API_KEY,
-    {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body:JSON.stringify({
-        contents:[{
-          parts:[
-            {text:"Return strict JSON with detected_doc_type, expiry_date, validation_score, fraud_signal, completeness_score, ai_confidence"},
-            {inlineData:{mimeType:file.type,data:base64}}
-          ]
-        }],
-        generationConfig:{
-          temperature:0,
-          response_mime_type:"application/json"
-        }
-      })
-    }
-  );
-
-  if (!response.ok) return fallbackAnalysis();
-
-  try {
-
-    const data = await response.json();
-
-    const text =
-      data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-    const parsed = JSON.parse(text);
-
-    return {
-      detected_doc_type:
-        parsed.detected_doc_type || declared_doc_type,
-      expiry_date:
-        parsed.expiry_date
-          ? new Date(parsed.expiry_date).getTime()
-          : null,
-      validation_score: clamp(parsed.validation_score),
-      fraud_signal: clamp(parsed.fraud_signal),
-      completeness_score: clamp(parsed.completeness_score),
-      ai_confidence: clamp(parsed.ai_confidence ?? 0.5)
-    };
-
-  } catch {
-    return fallbackAnalysis();
-  }
-}
-
-function fallbackAnalysis() {
-  return {
-    detected_doc_type:"unknown",
-    expiry_date:null,
-    validation_score:0.4,
-    fraud_signal:0.2,
-    completeness_score:0.4,
-    ai_confidence:0.3
-  };
-}
-
-/* =========================================================
 UTILITIES
 ========================================================= */
 
 async function sha256(buffer) {
-  const hashBuffer = await crypto.subtle.digest(
-    "SHA-256",
-    buffer
-  );
+  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
 
   return Array.from(new Uint8Array(hashBuffer))
     .map(b=>b.toString(16).padStart(2,"0"))
@@ -538,11 +317,8 @@ function computeRisk({
   const now = Date.now();
   let expiryRisk = 0;
 
-  if (expiry_date && expiry_date < now)
-    expiryRisk = 1;
-
-  else if (expiry_date && expiry_date - now < 604800000)
-    expiryRisk = 0.5;
+  if (expiry_date && expiry_date < now) expiryRisk = 1;
+  else if (expiry_date && expiry_date - now < 604800000) expiryRisk = 0.5;
 
   return (
     (1 - validation_score) * 0.4 +
@@ -575,17 +351,10 @@ function buildKey({
 
 async function putToR2(scope, key, file, env) {
 
-  if (scope === "mission")
-    return env.MISSION_DOCS.put(key,file);
-
-  if (scope === "operator")
-    return env.OPERATOR_DOCS.put(key,file);
-
-  if (scope === "fleet")
-    return env.FLEET_DOCS.put(key,file);
-
-  if (scope === "autofleet")
-    return env.AUTOFLEET_DOCS.put(key,file);
+  if (scope === "mission") return env.MISSION_DOCS.put(key,file);
+  if (scope === "operator") return env.OPERATOR_DOCS.put(key,file);
+  if (scope === "fleet") return env.FLEET_DOCS.put(key,file);
+  if (scope === "autofleet") return env.AUTOFLEET_DOCS.put(key,file);
 
   throw new Error("INVALID_SCOPE");
 }
