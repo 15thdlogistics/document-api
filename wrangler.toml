@@ -45,7 +45,7 @@ name = "MISSION_CLOCKS"
 class_name = "MissionClocks"
 
 [[migrations]]
-tag = "v1"
+tag = "v3"
 new_sqlite_classes = ["MissionState", "MissionClocks"]
 
 ########################################################
