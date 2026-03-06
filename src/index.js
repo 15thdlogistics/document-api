@@ -1,3 +1,18 @@
+import { handleUpload } from "./upload.js";
+
+export default {
+  async fetch(request, env, ctx) {
+
+    const url = new URL(request.url);
+
+    if (request.method === "POST" && url.pathname === "/upload") {
+      return handleUpload(request, env, ctx);
+    }
+
+    return new Response("Not Found", { status: 404 });
+  }
+};
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
