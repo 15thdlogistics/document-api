@@ -1,6 +1,3 @@
-import { handleUpload } from "./upload.js";
-import "./offload.js";
-import "./mission-state.js";
 
 export default {
 
