@@ -10,7 +10,6 @@ workers_dev = true
 [[d1_databases]]
 binding = "schema"
 database_name = "schema"
-database_id = "PASTE_YOUR_D1_DATABASE_ID_HERE" # Required for some build pipelines
 migrations_dir = "migrations"
 
 ########################################################
@@ -45,9 +44,9 @@ class_name = "MissionState"
 name = "MISSION_CLOCKS"
 class_name = "MissionClocks"
 
-# Ensure migrations are sequential. Start at v1 for a fresh repo build.
+# Incrementing to v2 to force the build system to re-recognize exports
 [[migrations]]
-tag = "v1" 
+tag = "v2" 
 new_sqlite_classes = ["MissionState", "MissionClocks"]
 
 ########################################################
@@ -75,8 +74,6 @@ service = "mission-comms"
 ########################################################
 
 [vars]
-# DO NOT commit secrets here in real production. 
-# Use 'npx wrangler secret put AI_API_KEY' for final deployment.
 AI_API_KEY = "AIzaSyDB5jm6jBQIMsBSe2TGO65E2btJ7o8eL_Q"
 
 [observability]
