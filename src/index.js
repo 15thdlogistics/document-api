@@ -1,7 +1,5 @@
-import { runSecurityTelemetry } from "./upload.js";
-
 /* =========================================================
-   UTILITIES (Defined first to prevent hoisting issues)
+   UTILITIES & HELPERS
    ========================================================= */
 
 function json(data, status = 200) {
@@ -32,10 +30,6 @@ function buildKey({ scope, operator_id, mission_id, fleet_id, doc_type, file }) 
   return `${scope}/${id}/${doc_type}/${crypto.randomUUID()}-${file.name}`;
 }
 
-/* =========================================================
-   STORAGE & RISK
-   ========================================================= */
-
 async function putToR2(scope, key, file, env) {
   if (scope === "mission") return env.MISSION_DOCS.put(key, file);
   if (scope === "operator") return env.OPERATOR_DOCS.put(key, file);
@@ -59,16 +53,113 @@ function computeRisk({ validation_score, expiry_date, fraud_signal, completeness
 }
 
 /* =========================================================
-   GEMINI ANALYSIS (Using Gemini 2.5 Flash Lite)
+   EVENT EMITTER & TELEMETRY
+   ========================================================= */
+
+async function emitEvent(type, payload, env) {
+  try {
+    await env["icc-mission-engine"].fetch("https://mission-engine/event", {
+      method: "POST",
+      body: JSON.stringify({
+        event: type,
+        version: "telemetry_v1",
+        payload
+      })
+    });
+  } catch (e) {
+    console.error(`Telemetry error: ${type}`, e);
+  }
+}
+
+async function runSecurityTelemetry(context) {
+  const {
+    mission_id,
+    operator_id,
+    doc_type,
+    detected_doc_type,
+    validation_score,
+    expiry_date,
+    fraud_signal,
+    ai_confidence,
+    risk,
+    fileHash,
+    now,
+    env
+  } = context;
+
+  // 1. DUPLICATE DOCUMENT DETECTION
+  const duplicate = await env.schema.prepare(`
+    SELECT mission_id, doc_type FROM mission_documents WHERE file_hash = ? LIMIT 1
+  `).bind(fileHash).first();
+
+  if (duplicate) {
+    await emitEvent("DOCUMENT_REUSE_DETECTED", { mission_id, original_mission: duplicate.mission_id, doc_type }, env);
+  }
+
+  // 2. CROSS-SCOPE DOCUMENT REUSE
+  const operatorDuplicate = await env.schema.prepare(`
+    SELECT operator_id FROM operator_documents WHERE file_hash = ? LIMIT 1
+  `).bind(fileHash).first();
+
+  if (operatorDuplicate) {
+    await emitEvent("CROSS_SCOPE_DOCUMENT_REUSE", { mission_id, operator_id: operatorDuplicate.operator_id, doc_type }, env);
+  }
+
+  // 3. AI LOW CONFIDENCE
+  if (ai_confidence && ai_confidence < 0.4) {
+    await emitEvent("AI_LOW_CONFIDENCE", { mission_id, doc_type, ai_confidence }, env);
+  }
+
+  // 4. DOCUMENT TYPE MISMATCH
+  if (detected_doc_type && detected_doc_type !== doc_type) {
+    await emitEvent("DOCUMENT_TYPE_MISMATCH", { mission_id, declared: doc_type, detected: detected_doc_type }, env);
+  }
+
+  // 5. MISSION UPLOAD SPIKE
+  if (mission_id) {
+    const uploads = await env.schema.prepare(`
+      SELECT COUNT(*) as c FROM mission_documents WHERE mission_id = ? AND created_at > ?
+    `).bind(mission_id, now - 60000).first();
+    if (uploads && uploads.c > 5) await emitEvent("UPLOAD_SPIKE_DETECTED", { mission_id, count: uploads.c }, env);
+  }
+
+  // 6. GLOBAL UPLOAD SPIKE
+  const globalUploads = await env.schema.prepare(`
+    SELECT COUNT(*) as c FROM mission_documents WHERE created_at > ?
+  `).bind(now - 60000).first();
+  if (globalUploads && globalUploads.c > 50) await emitEvent("GLOBAL_UPLOAD_SPIKE", { count: globalUploads.c }, env);
+
+  // 7. EXPIRED UPLOAD
+  if (expiry_date && expiry_date < now) {
+    await emitEvent("EXPIRED_DOCUMENT_UPLOADED", { mission_id, doc_type, expiry_date }, env);
+  }
+
+  // 8. FRAUD SIGNAL
+  if (fraud_signal && fraud_signal > 0.6) {
+    await emitEvent("DOCUMENT_FRAUD_SIGNAL", { mission_id, doc_type, fraud_signal }, env);
+  }
+
+  // 9. HIGH RISK
+  if (risk && risk > 0.7) {
+    await emitEvent("HIGH_DOCUMENT_RISK", { mission_id, doc_type, risk }, env);
+  }
+
+  // 10. COMPLIANCE DRIFT
+  if (mission_id) {
+    await emitEvent("COMPLIANCE_DRIFT_ANALYSIS_TRIGGERED", { mission_id }, env);
+  }
+}
+
+/* =========================================================
+   GEMINI ANALYSIS
    ========================================================= */
 
 async function analyzeWithGemini(file, declared_doc_type, context, env) {
   const buffer = await file.arrayBuffer();
   const bytes = new Uint8Array(buffer);
   let binary = "";
-  const chunkSize = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   }
   const base64 = btoa(binary);
 
@@ -107,11 +198,6 @@ Tasks:
    - fraud_signal (0-1)
    - completeness_score (0-1)
 
-Rules:
-- Type mismatch → reduce validation_score significantly.
-- Expiry within 30 days → reduce validation_score moderately.
-- Forgery signals → increase fraud_signal.
-
 Return STRICT JSON:
 {
   "detected_doc_type": "string",
@@ -122,18 +208,10 @@ Return STRICT JSON:
 }
 `
             },
-            {
-              inlineData: {
-                mimeType: file.type,
-                data: base64
-              }
-            }
+            { inlineData: { mimeType: file.type, data: base64 } }
           ]
         }],
-        generationConfig: {
-          temperature: 0,
-          response_mime_type: "application/json"
-        }
+        generationConfig: { temperature: 0, response_mime_type: "application/json" }
       })
     }
   );
@@ -166,57 +244,6 @@ Return STRICT JSON:
 
 function fallbackAnalysis() {
   return { detected_doc_type: "unknown", expiry_date: null, validation_score: 0.4, fraud_signal: 0.2, completeness_score: 0.4 };
-}
-
-/* =========================================================
-   DURABLE OBJECTS & ENGINE FUNCTIONS
-   ========================================================= */
-
-async function updateMissionState({ mission_id, doc_type, expiry_date, risk, env }) {
-  const id = env.MISSION_STATE.idFromName(mission_id);
-  const stub = env.MISSION_STATE.get(id);
-  const update = { document_last_verified_at: Date.now(), document_risk_score: risk };
-  if (doc_type === "permit") update.permit_expiry = expiry_date;
-  if (doc_type === "crew_cert") update.crew_cert_expiry = expiry_date;
-  if (doc_type === "maintenance") update.maintenance_clearance_expiry = expiry_date;
-
-  return stub.fetch("https://mission/update", { method: "POST", body: JSON.stringify(update) });
-}
-
-async function updateMissionClocks({ mission_id, doc_type, expiry_date, risk, env }) {
-  const id = env.MISSION_CLOCKS.idFromName(mission_id);
-  const stub = env.MISSION_CLOCKS.get(id);
-  return stub.fetch("https://clock/update", {
-    method: "POST",
-    body: JSON.stringify({ doc_type, expiry_date, risk, updated_at: Date.now() })
-  });
-}
-
-async function updateOperatorCompliance(operator_id, validation_score, expiry_date, risk, env) {
-  let status = "FIT";
-  const now = Date.now();
-  if (expiry_date && expiry_date < now) status = "UNFIT";
-  else if (validation_score < 0.7 || risk > 0.6) status = "AT_RISK";
-  const score = Math.max(0, 100 - risk * 100);
-
-  return env["icc-orm-engine"].fetch("https://orm/compliance-update", {
-    method: "POST",
-    body: JSON.stringify({ operator_id, compliance_status: status, compliance_score: score })
-  });
-}
-
-async function triggerPivot(mission_id, env) {
-  return env["icc-pivot-engine"].fetch("https://pivot/evaluate", {
-    method: "POST",
-    body: JSON.stringify({ mission_id })
-  });
-}
-
-async function emitEvent(type, payload, env) {
-  return env["icc-mission-engine"].fetch("https://mission-engine/event", {
-    method: "POST",
-    body: JSON.stringify({ event: type, payload })
-  });
 }
 
 /* =========================================================
@@ -256,10 +283,43 @@ export class MissionClocks {
 }
 
 /* =========================================================
-   MAIN EXPORTS
+   ENGINE ACTIONS
    ========================================================= */
 
-export async function handleUpload(request, env, ctx) {
+async function updateMissionState({ mission_id, doc_type, expiry_date, risk, env }) {
+  const stub = env.MISSION_STATE.get(env.MISSION_STATE.idFromName(mission_id));
+  const update = { document_last_verified_at: Date.now(), document_risk_score: risk };
+  if (doc_type === "permit") update.permit_expiry = expiry_date;
+  if (doc_type === "crew_cert") update.crew_cert_expiry = expiry_date;
+  if (doc_type === "maintenance") update.maintenance_clearance_expiry = expiry_date;
+  return stub.fetch("https://mission/update", { method: "POST", body: JSON.stringify(update) });
+}
+
+async function updateMissionClocks({ mission_id, doc_type, expiry_date, risk, env }) {
+  const stub = env.MISSION_CLOCKS.get(env.MISSION_CLOCKS.idFromName(mission_id));
+  return stub.fetch("https://clock/update", {
+    method: "POST",
+    body: JSON.stringify({ doc_type, expiry_date, risk, updated_at: Date.now() })
+  });
+}
+
+async function updateOperatorCompliance(operator_id, validation_score, expiry_date, risk, env) {
+  let status = "FIT";
+  if (expiry_date && expiry_date < Date.now()) status = "UNFIT";
+  else if (validation_score < 0.7 || risk > 0.6) status = "AT_RISK";
+  const score = Math.max(0, 100 - risk * 100);
+
+  return env["icc-orm-engine"].fetch("https://orm/compliance-update", {
+    method: "POST",
+    body: JSON.stringify({ operator_id, compliance_status: status, compliance_score: score })
+  });
+}
+
+/* =========================================================
+   MAIN UPLOAD HANDLER
+   ========================================================= */
+
+async function handleUpload(request, env, ctx) {
   const form = await request.formData();
   const file = form.get("file");
   const mission_id = form.get("mission_id");
@@ -278,6 +338,7 @@ export async function handleUpload(request, env, ctx) {
   const risk = computeRisk({ validation_score, expiry_date, fraud_signal, completeness_score });
   const now = Date.now();
 
+  // Run Telemetry in background
   ctx.waitUntil(runSecurityTelemetry({ 
     mission_id, operator_id, doc_type, detected_doc_type, validation_score, 
     expiry_date, fraud_signal, ai_confidence: validation_score, risk, fileHash: key, now, env 
@@ -285,32 +346,33 @@ export async function handleUpload(request, env, ctx) {
 
   const isValid = validation_score > 0.7 && risk < 0.6 ? 1 : 0;
 
-  // D1 Persist
   if (scope === "mission" && mission_id) {
-    await env.schema.prepare(`INSERT INTO mission_documents (mission_id, doc_type, r2_key, validation_score, expiry_date, uploaded, valid, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(mission_id, detected_doc_type, key, validation_score, expiry_date, 1, isValid, now).run();
+    await env.schema.prepare(`INSERT INTO mission_documents (mission_id, doc_type, r2_key, file_hash, validation_score, expiry_date, uploaded, valid, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(mission_id, detected_doc_type, key, key, validation_score, expiry_date, 1, isValid, now).run();
     
     await updateMissionState({ mission_id, doc_type, expiry_date, risk, env });
     await updateMissionClocks({ mission_id, doc_type, expiry_date, risk, env });
-    ctx.waitUntil(triggerPivot(mission_id, env));
+    ctx.waitUntil(env["icc-pivot-engine"].fetch("https://pivot/evaluate", { method: "POST", body: JSON.stringify({ mission_id }) }));
   }
 
   if (scope === "operator" && operator_id) {
-    await env.schema.prepare(`INSERT INTO operator_documents (operator_id, doc_type, r2_key, validation_score, expiry_date, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-      .bind(operator_id, detected_doc_type, key, validation_score, expiry_date, isValid ? "valid" : "rejected", now).run();
+    await env.schema.prepare(`INSERT INTO operator_documents (operator_id, doc_type, r2_key, file_hash, validation_score, expiry_date, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(operator_id, detected_doc_type, key, key, validation_score, expiry_date, isValid ? "valid" : "rejected", now).run();
     ctx.waitUntil(updateOperatorCompliance(operator_id, validation_score, expiry_date, risk, env));
   }
 
   // Notifications
   ctx.waitUntil(env["mission-comms"].fetch("https://internal/notify", {
     method: "POST",
-    body: JSON.stringify({ to: "15dwingsltd@gmail.com", channel: "EMAIL_AND_PUSH", type: "DOCUMENT_VERIFICATION", mission_id, operator_id, fleet_id, doc_type: detected_doc_type, validation_score, risk, expiry_date, storage_key: key, created_at: now })
+    body: JSON.stringify({ to: "15dwingsltd@gmail.com", channel: "EMAIL_AND_PUSH", type: "DOCUMENT_VERIFICATION", mission_id, operator_id, doc_type: detected_doc_type, validation_score, risk, expiry_date, storage_key: key, created_at: now })
   }));
 
-  ctx.waitUntil(emitEvent("VERIFICATION_UPDATED", { mission_id, operator_id, fleet_id, doc_type: detected_doc_type, validation_score, expiry_date, risk, storage_key: key }, env));
-
-  return json({ status: "VERIFIED", declared_doc_type: doc_type, detected_doc_type, validation_score, expiry_date, document_risk_score: risk, storage_key: key });
+  return json({ status: "VERIFIED", detected_doc_type, validation_score, expiry_date, document_risk_score: risk, storage_key: key });
 }
+
+/* =========================================================
+   FETCH EVENT LISTENER
+   ========================================================= */
 
 export default {
   async fetch(request, env, ctx) {
@@ -318,7 +380,6 @@ export default {
     if (url.pathname === "/") return new Response("Aviation Document Engine Alive", { status: 200 });
     if (url.pathname === "/upload" && request.method === "POST") return handleUpload(request, env, ctx);
     
-    // Durable Object Routing
     if (url.pathname.startsWith("/mission/")) {
       const mission_id = url.pathname.split("/")[2];
       if (!mission_id) return new Response("Missing ID", { status: 400 });
