@@ -82,16 +82,58 @@ async function analyzeWithGemini(file, declared_doc_type, context, env) {
           parts: [
             {
               text: `
-You are an ICAO-aligned aviation compliance AI for aviation operators globally with 49 years of experience.
-Mission Context: [Scope: ${context.scope}] [Mission: ${context.mission_id || "N/A"}] [Operator: ${context.operator_id || "N/A"}]
+You are an ICAO-aligned aviation compliance AI for aviation operators globally with 49 years of experience across diverse regions and jurisdictions
+
+Mission Context:
+- Scope: ${context.scope}
+- Mission ID: ${context.mission_id || "N/A"}
+- Operator ID: ${context.operator_id || "N/A"}
+- Fleet ID: ${context.fleet_id || "N/A"}
+
 Declared document type: "${declared_doc_type}"
-Tasks: 1. OCR 2. Detect Type 3. Validate Seals 4. Extract ISO8601 Expiry 5. Detect Tampering.
-Return STRICT JSON: {"detected_doc_type": "string", "expiry_date": "ISO8601 or null", "validation_score": number, "fraud_signal": number, "completeness_score": number}`
+
+System sensitivity: STRICT.
+False positives are dangerous.
+False negatives are catastrophic.
+
+Tasks:
+1. Perform OCR extraction.
+2. Detect true document type.
+3. Validate regulatory identifiers and authority seals.
+4. Extract expiry date (ISO8601).
+5. Detect tampering indicators.
+6. Score:
+   - validation_score (0-1)
+   - fraud_signal (0-1)
+   - completeness_score (0-1)
+
+Rules:
+- Type mismatch → reduce validation_score significantly.
+- Expiry within 30 days → reduce validation_score moderately.
+- Forgery signals → increase fraud_signal.
+
+Return STRICT JSON:
+{
+  "detected_doc_type": "string",
+  "expiry_date": "ISO8601 or null",
+  "validation_score": number,
+  "fraud_signal": number,
+  "completeness_score": number
+}
+`
             },
-            { inlineData: { mimeType: file.type, data: base64 } }
+            {
+              inlineData: {
+                mimeType: file.type,
+                data: base64
+              }
+            }
           ]
         }],
-        generationConfig: { temperature: 0, response_mime_type: "application/json" }
+        generationConfig: {
+          temperature: 0,
+          response_mime_type: "application/json"
+        }
       })
     }
   );
@@ -127,7 +169,7 @@ function fallbackAnalysis() {
 }
 
 /* =========================================================
-   DURABLE OBJECTS & ENGINES
+   DURABLE OBJECTS & ENGINE FUNCTIONS
    ========================================================= */
 
 async function updateMissionState({ mission_id, doc_type, expiry_date, risk, env }) {
@@ -178,7 +220,7 @@ async function emitEvent(type, payload, env) {
 }
 
 /* =========================================================
-   DURABLE OBJECT CLASSES
+   DURABLE OBJECT CLASSES (Mandatory Exports)
    ========================================================= */
 
 export class MissionState {
@@ -262,7 +304,7 @@ export async function handleUpload(request, env, ctx) {
   // Notifications
   ctx.waitUntil(env["mission-comms"].fetch("https://internal/notify", {
     method: "POST",
-    body: JSON.stringify({ to: "15dwingsltd@gmail.com", channel: "EMAIL_AND_PUSH", type: "DOCUMENT_VERIFICATION", mission_id, operator_id, doc_type: detected_doc_type, validation_score, risk, expiry_date, storage_key: key, created_at: now })
+    body: JSON.stringify({ to: "15dwingsltd@gmail.com", channel: "EMAIL_AND_PUSH", type: "DOCUMENT_VERIFICATION", mission_id, operator_id, fleet_id, doc_type: detected_doc_type, validation_score, risk, expiry_date, storage_key: key, created_at: now })
   }));
 
   ctx.waitUntil(emitEvent("VERIFICATION_UPDATED", { mission_id, operator_id, fleet_id, doc_type: detected_doc_type, validation_score, expiry_date, risk, storage_key: key }, env));
