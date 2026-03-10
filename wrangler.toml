@@ -1,15 +1,16 @@
 name = "document-api"
 main = "src/index.js"
-compatibility_date = "2025-02-01"
+compatibility_date = "2024-04-01"
 workers_dev = true
 
 ########################################################
-# 🗄 D1 (SQLite) — REQUIRED FOR env.schema
+# 🗄 D1 (SQLite)
 ########################################################
 
 [[d1_databases]]
 binding = "schema"
 database_name = "schema"
+database_id = "PASTE_YOUR_D1_DATABASE_ID_HERE" # Required for some build pipelines
 migrations_dir = "migrations"
 
 ########################################################
@@ -44,8 +45,9 @@ class_name = "MissionState"
 name = "MISSION_CLOCKS"
 class_name = "MissionClocks"
 
+# Ensure migrations are sequential. Start at v1 for a fresh repo build.
 [[migrations]]
-tag = "v3"
+tag = "v1" 
 new_sqlite_classes = ["MissionState", "MissionClocks"]
 
 ########################################################
@@ -68,14 +70,14 @@ service = "icc-mission-engine"
 binding = "mission-comms"
 service = "mission-comms"
 
-
 ########################################################
 # 🔐 ENV VARS
 ########################################################
 
 [vars]
+# DO NOT commit secrets here in real production. 
+# Use 'npx wrangler secret put AI_API_KEY' for final deployment.
 AI_API_KEY = "AIzaSyDB5jm6jBQIMsBSe2TGO65E2btJ7o8eL_Q"
 
 [observability]
 enabled = true
-
